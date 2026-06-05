@@ -15,6 +15,22 @@
 
 ---
 
+## 📸 Screenshots
+
+### Power BI Dashboard
+<!-- Add dashboard screenshot here -->
+![Dashboard Overview](images/dashboard_overview.png)
+
+### Airflow DAG
+<!-- Add Airflow DAG screenshot here -->
+![Airflow DAG](images/airflow_dag.png)
+
+### Snowflake Tables
+<!-- Add Snowflake tables screenshot here -->
+![Snowflake Tables](images/snowflake_tables.png)
+
+---
+
 ## 🏗️ Architecture
 
 ```
