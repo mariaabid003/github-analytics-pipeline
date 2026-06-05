@@ -61,3 +61,17 @@ logs/
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# Build artifacts
+dbt/target/
+dbt/dev.duckdb
+
+# Exports
+dashboard/exports/*.csv
+
+# Logs
+logs/*.log
+airflow/logs/*.log
+
+# Env
+.env
