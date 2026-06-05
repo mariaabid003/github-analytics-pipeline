@@ -33,3 +33,12 @@ RUN pip install --no-cache-dir \
     tenacity \
     requests \
     pyspark==3.5.1
+
+# Copy project files into the image
+USER root
+COPY --chown=airflow:root airflow/dags /opt/airflow/dags
+COPY --chown=airflow:root dbt /opt/airflow/dbt
+COPY --chown=airflow:root snowflake /opt/airflow/snowflake
+COPY --chown=airflow:root spark_batch /opt/airflow/spark_batch
+COPY --chown=airflow:root data /opt/airflow/data
+USER airflow
