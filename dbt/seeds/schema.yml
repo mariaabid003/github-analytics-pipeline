@@ -1,0 +1,20 @@
+version: 2
+
+seeds:
+  - name: raw_github_events
+    description: >
+      Sample GitHub event data for local DuckDB development and testing.
+      Covers all 10 tracked repositories and all 8 event types.
+      In production, this table is replaced by the real Snowflake source
+      GITHUB_PIPELINE.RAW.RAW_GITHUB_EVENTS loaded via snowflake/sf_load.py.
+    columns:
+      - name: event_id
+        description: "GitHub event ID — unique per event"
+      - name: event_type
+        description: "WatchEvent / ForkEvent / PushEvent / PullRequestEvent / IssuesEvent / ReleaseEvent / CreateEvent / IssueCommentEvent"
+      - name: repo_name
+        description: "owner/repo"
+      - name: created_at
+        description: "GitHub event creation timestamp (ISO 8601)"
+      - name: date_partition
+        description: "Partition key — event date"

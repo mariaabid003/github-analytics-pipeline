@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+USER root
+
+# Install Java and OS dependencies
+RUN apt-get update && apt-get install -y default-jre-headless curl procps && apt-get clean
+
+# Create a non-root user to avoid Java NPE when getting user.name
+RUN useradd -ms /bin/bash sparkuser
+
+USER sparkuser
+ENV USER=sparkuser
+ENV PATH="/home/sparkuser/.local/bin:${PATH}"
+
+# Install Python dependencies and PySpark
+RUN pip install --no-cache-dir \
+    pyspark==3.5.1 \
+    pandas \
+    pyarrow \
+    loguru \
+    python-dotenv \
+    tenacity \
+    requests \
+    kafka-python

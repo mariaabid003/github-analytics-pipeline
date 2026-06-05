@@ -1,0 +1,63 @@
+# ── Credentials & Secrets ─────────────────────────────────────────────────────
+.env
+bigquery/service_account.json
+dbt/profiles.yml        # never commit real credentials
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.eggs/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# ── Data Files ────────────────────────────────────────────────────────────────
+data/raw/
+data/processed/
+data/gcs-emulator/
+data/checkpoints/
+*.parquet
+*.csv
+*.db
+*.duckdb
+
+# ── dbt ───────────────────────────────────────────────────────────────────────
+dbt/target/
+dbt/dbt_packages/
+dbt/.user.yml
+dbt/dev.duckdb
+
+# ── Airflow ───────────────────────────────────────────────────────────────────
+airflow/logs/
+airflow.db
+
+# ── Spark ─────────────────────────────────────────────────────────────────────
+spark-warehouse/
+derby.log
+metastore_db/
+data/checkpoints/
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+.docker/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

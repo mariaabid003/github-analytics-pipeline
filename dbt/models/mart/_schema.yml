@@ -1,0 +1,107 @@
+version: 2
+
+models:
+  # ── fact_commits ──────────────────────────────────────────────────────────────
+  - name: fact_commits
+    description: >
+      One row per PushEvent. Captures every commit batch pushed to a repo,
+      including the commit count and concatenated commit messages.
+    columns:
+      - name: commit_fact_key
+        description: "Surrogate key (hash of event_id)"
+        tests: [not_null, unique]
+      - name: event_id
+        tests: [not_null, unique]
+      - name: repo_name
+        tests: [not_null]
+      - name: pushed_by
+        tests: [not_null]
+      - name: commit_count
+        tests:
+          - not_null
+          # Public-timeline PushEvents may have commit_count=0 when GitHub doesn't
+          # return the commits array. min_value: 0 allows these through as warnings.
+          - dbt_utils.accepted_range:
+              min_value: 0
+              severity: warn
+      - name: pushed_at
+        tests: [not_null]
+      - name: event_date
+        tests: [not_null]
+
+  # ── fact_prs ──────────────────────────────────────────────────────────────────
+  - name: fact_prs
+    description: >
+      One row per PullRequestEvent (a single PR can appear multiple times
+      as it transitions opened → closed → merged).
+    columns:
+      - name: pr_fact_key
+        description: "Surrogate key (hash of event_id)"
+        tests: [not_null, unique]
+      - name: event_id
+        tests: [not_null, unique]
+      - name: repo_name
+        tests: [not_null]
+      - name: pr_action
+        tests:
+          - not_null
+          - accepted_values:
+              # Known GitHub PR action values. GitHub can add new types at any time
+              # (e.g. auto_merge_enabled, milestoned, enqueued). Unknown actions are
+              # handled gracefully by ELSE 'open' in fact_prs.sql, so this is warn
+              # only — a new action type should not kill the pipeline.
+              severity: warn
+              values: [opened, closed, reopened, synchronize, ready_for_review,
+                       converted_to_draft, labeled, unlabeled, review_requested,
+                       review_request_removed, edited, assigned, unassigned,
+                       locked, unlocked, auto_merge_enabled, auto_merge_disabled,
+                       milestoned, demilestoned, enqueued, dequeued]
+      - name: pr_status
+        tests:
+          - accepted_values:
+              # ELSE 'open' in fact_prs.sql means only these three values are possible.
+              values: [open, closed, merged]
+      - name: event_at
+        tests: [not_null]
+
+  # ── dim_repos ─────────────────────────────────────────────────────────────────
+  - name: dim_repos
+    description: >
+      One row per unique repository — latest snapshot of repo metadata
+      (stars, forks, language) based on the most recent event seen.
+    columns:
+      - name: repo_key
+        description: "Surrogate key (hash of repo_name)"
+        tests: [not_null, unique]
+      - name: repo_name
+        tests: [not_null, unique]
+      - name: language
+        tests: [not_null]
+      - name: stars
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+  # ── dim_contributors ──────────────────────────────────────────────────────────
+  - name: dim_contributors
+    description: >
+      One row per unique GitHub actor. Aggregates their activity across
+      all repos and event types in the dataset.
+    columns:
+      - name: contributor_key
+        description: "Surrogate key (hash of actor)"
+        tests: [not_null, unique]
+      - name: actor
+        tests: [not_null, unique]
+      - name: total_events
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+      - name: repos_contributed_to
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+      - name: first_seen_at
+        tests: [not_null]
+      - name: last_seen_at
+        tests: [not_null]

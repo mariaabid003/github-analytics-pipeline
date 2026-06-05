@@ -1,0 +1,54 @@
+name: github_analytics
+version: "1.0.0"
+config-version: 2
+
+profile: github_analytics
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  github_analytics:
+    staging:
+      +materialized: view
+      +schema: staging
+    mart:
+      +materialized: table
+      +schema: mart
+
+seeds:
+  github_analytics:
+    # Seeds land in the raw schema, consistent with where the Snowflake loader writes.
+    +schema: raw
+    raw_github_events:
+      # Explicit types ensure DuckDB loads the CSV seed correctly.
+      # Not needed for Snowflake prod (seeds are dev-only).
+      +column_types:
+        stars:       BIGINT
+        forks:       BIGINT
+        open_issues: BIGINT
+        commit_count: BIGINT
+        pr_number:   BIGINT
+        issue_number: BIGINT
+        is_tracked:  BOOLEAN
+        pr_merged:   BOOLEAN
+        is_merge:    BOOLEAN
+        has_text:    BOOLEAN
+
+vars:
+  start_date: "2024-01-01"
+
+on-run-start:
+  - "{{ log('Starting dbt run — target: ' ~ target.name, info=true) }}"
+
+on-run-end:
+  - "{{ log('dbt run complete', info=true) }}"

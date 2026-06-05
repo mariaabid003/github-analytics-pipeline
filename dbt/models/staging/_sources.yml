@@ -1,0 +1,51 @@
+version: 2
+
+sources:
+  - name: github_raw
+    description: "Raw GitHub events loaded from local processed Parquet via Snowflake loader."
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'GITHUB_PIPELINE') }}"
+    schema:   "{{ env_var('SNOWFLAKE_SCHEMA_RAW', 'RAW') }}"
+    tables:
+      - name: raw_github_events
+        description: "One row per GitHub public event (WatchEvent, PushEvent, PullRequestEvent, etc.)"
+        columns:
+          - name: event_id
+            description: "GitHub event ID — unique per event"
+            tests:
+              - not_null
+              # Duplicates in the raw table occur when the loader re-processes a
+              # date partition (e.g. backfills). Deduplication happens in
+              # stg_github_events. Downgraded to warn so this doesn't kill the DAG.
+              - unique:
+                  severity: warn
+          - name: event_type
+            description: "Event classification: WatchEvent / ForkEvent / PushEvent / PullRequestEvent / IssuesEvent / ReleaseEvent / CreateEvent / IssueCommentEvent"
+            tests:
+              # Null event_type rows arrive from the Spark processor when the
+              # GitHub API response is missing the type field. They are filtered
+              # in stg_github_events. Downgraded to warn — upstream data issue.
+              - not_null:
+                  severity: warn
+              - accepted_values:
+                  values:
+                    - WatchEvent
+                    - ForkEvent
+                    - PushEvent
+                    - PullRequestEvent
+                    - IssuesEvent
+                    - ReleaseEvent
+                    - CreateEvent
+                    - IssueCommentEvent
+          - name: repo_name
+            description: "owner/repo"
+            tests:
+              - not_null
+          - name: created_at
+            tests:
+              - not_null
+          - name: date_partition
+            tests:
+              # Rows loaded before date_partition was added to sf_load.py will be NULL.
+              # Downgraded to warn so historical data doesn't block the pipeline.
+              - not_null:
+                  severity: warn

@@ -1,0 +1,35 @@
+FROM apache/airflow:2.9.1-python3.11
+
+USER root
+
+# Install Java for Spark submit
+RUN apt-get update && \
+    apt-get install -y default-jre-headless && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+USER airflow
+
+# Install Airflow providers with constraints
+RUN pip install --no-cache-dir apache-airflow-providers-apache-spark \
+    --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.1/constraints-3.11.txt"
+
+# Install dbt and Snowflake tools (without strict Airflow constraints to prevent ResolutionImpossible)
+RUN pip install --no-cache-dir \
+    snowflake-connector-python \
+    snowflake-sqlalchemy \
+    dbt-core \
+    dbt-snowflake \
+    dbt-duckdb \
+    duckdb
+
+# Install other Python dependencies
+RUN pip install --no-cache-dir \
+    kafka-python \
+    pandas \
+    pyarrow \
+    python-dotenv \
+    loguru \
+    tenacity \
+    requests \
+    pyspark==3.5.1

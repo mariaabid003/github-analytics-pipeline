@@ -1,0 +1,301 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GitHub Analytics Pipeline — Docker Compose
+# Services: Zookeeper · Kafka · fake-gcs-server · PostgreSQL · Airflow
+#           github-producer · spark-streaming
+# ─────────────────────────────────────────────────────────────────────────────
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  env_file: .env
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ""
+    AIRFLOW__WEBSERVER__SECRET_KEY: "github_analytics_secret_key_change_me"
+    AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+    PYTHONPATH: /opt/airflow
+    # ── Container-internal hostnames (override any .env localhost values) ───────
+    KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+    GCS_EMULATOR_HOST: "fake-gcs:4443"
+    SPARK_MASTER_URL: "spark://spark-master:7077"
+    # Absolute paths so spark_batch_processor.py and sf_load.py resolve files
+    # correctly regardless of the process working directory inside the container.
+    LOCAL_GCS_ROOT: "/opt/airflow/data/gcs-emulator"
+    GCS_BUCKET: "github-analytics-raw"
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ./data:/opt/airflow/data
+    - ./dbt:/opt/airflow/dbt
+    - ./snowflake:/opt/airflow/snowflake
+    - ./spark_batch:/opt/airflow/spark_batch
+    - ./.env:/opt/airflow/.env
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - pipeline-net
+
+services:
+
+  # ── Zookeeper ─────────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: github_zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "echo ruok | nc localhost 2181" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-net
+
+  # ── Kafka ─────────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: github_kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - pipeline-net
+
+  # ── Kafka Topic Init ───────────────────────────────────────────────────────
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: github_kafka_init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: [ "/bin/bash", "-c" ]
+    # No surrounding quotes — the block scalar is already the shell command string
+    command: |
+      kafka-topics --create --if-not-exists \
+        --bootstrap-server kafka:29092 \
+        --topic github-events \
+        --partitions 3 \
+        --replication-factor 1 && \
+      echo 'Topic github-events created ✓'
+    networks:
+      - pipeline-net
+
+  # ── Fake GCS Server (local GCS emulator) ─────────────────────────────────
+  fake-gcs:
+    image: fsouza/fake-gcs-server:latest
+    container_name: github_fake_gcs
+    ports:
+      - "4443:4443"
+    volumes:
+      - ./data/gcs-emulator:/data
+    command:
+      - -scheme
+      - http
+      - -port
+      - "4443"
+      - -backend
+      - filesystem
+      - -filesystem-root
+      - /data
+      - -public-host
+      - localhost:4443
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:4443/storage/v1/b" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-net
+
+  # ── PostgreSQL (Airflow metadata) ─────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: github_postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "airflow" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-net
+
+  # ── Airflow Init ──────────────────────────────────────────────────────────
+  # Packages are installed via _PIP_ADDITIONAL_REQUIREMENTS (see x-airflow-common)
+  # so this container only needs to migrate the DB and create the admin user.
+  airflow-init:
+    <<: *airflow-common
+    container_name: github_airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate && \
+        airflow users create \
+          --username admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com \
+          --password admin || true && \
+        airflow connections add spark_default \
+          --conn-type spark \
+          --conn-host spark://spark-master \
+          --conn-port 7077 || true
+
+  # ── Airflow Webserver ─────────────────────────────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: github_airflow_webserver
+    command: bash -c "rm -f /opt/airflow/airflow-webserver.pid && airflow webserver"
+    ports:
+      - "8081:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── Airflow Scheduler ─────────────────────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: github_airflow_scheduler
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ── Spark Master ──────────────────────────────────────────────────────────
+  spark-master:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: github_spark_master
+    working_dir: /opt/airflow
+    command: spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "8082:8080"
+      - "7077:7077"
+    networks:
+      - pipeline-net
+    volumes:
+      - ./data:/opt/airflow/data
+      - ./spark_batch:/opt/airflow/spark_batch
+      - ./spark_streaming:/opt/airflow/spark_streaming
+      - ./.env:/opt/airflow/.env
+
+  # ── Spark Worker ──────────────────────────────────────────────────────────
+  spark-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: github_spark_worker
+    working_dir: /opt/airflow
+    command: spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    depends_on:
+      - spark-master
+    networks:
+      - pipeline-net
+    volumes:
+      - ./data:/opt/airflow/data
+      - ./spark_batch:/opt/airflow/spark_batch
+      - ./spark_streaming:/opt/airflow/spark_streaming
+      - ./.env:/opt/airflow/.env
+
+  # ── GitHub Events Producer ────────────────────────────────────────────────
+  # Polls GitHub Public Events API every 5s and publishes to Kafka.
+  # This is the ENTRY POINT of the pipeline — without it no new data flows in.
+  # Requires GITHUB_TOKEN in .env for 5000 req/hr (vs 60 without).
+  github-producer:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: github_producer
+    working_dir: /opt/airflow
+    command: python producer/github_producer.py
+    env_file: .env
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+    restart: unless-stopped          # auto-restarts if it crashes or Docker restarts
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - pipeline-net
+    volumes:
+      - ./producer:/opt/airflow/producer
+      - ./logs:/opt/airflow/logs
+      - ./.env:/opt/airflow/.env
+
+  # ── Spark Streaming Job ───────────────────────────────────────────────────
+  # Consumes Kafka topic github-events and writes raw Parquet to the local
+  # GCS emulator (data/gcs-emulator/raw/date=YYYY-MM-DD/...).
+  # Uses --no-spark (Python/kafka-python) — no Java dependency issues.
+  spark-streaming:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: github_spark_streaming
+    working_dir: /opt/airflow
+    command: python spark_streaming/github_to_gcs.py --no-spark
+    env_file: .env
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      GCS_EMULATOR_HOST: "fake-gcs:4443"
+      LOCAL_GCS_ROOT: "./data/gcs-emulator"
+    restart: unless-stopped          # must run 24/7 to capture today's data
+    depends_on:
+      kafka:
+        condition: service_healthy
+      github-producer:
+        condition: service_started
+    networks:
+      - pipeline-net
+    volumes:
+      - ./data:/opt/airflow/data
+      - ./spark_streaming:/opt/airflow/spark_streaming
+      - ./logs:/opt/airflow/logs
+      - ./.env:/opt/airflow/.env
+
+volumes:
+  postgres_data:
+
+networks:
+  pipeline-net:
+    driver: bridge
+
