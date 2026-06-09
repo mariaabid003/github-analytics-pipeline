@@ -40,5 +40,6 @@ COPY --chown=airflow:root airflow/dags /opt/airflow/dags
 COPY --chown=airflow:root dbt /opt/airflow/dbt
 COPY --chown=airflow:root snowflake /opt/airflow/snowflake
 COPY --chown=airflow:root spark_batch /opt/airflow/spark_batch
+COPY --chown=airflow:root producer /opt/airflow/producer
 RUN mkdir -p /opt/airflow/data/gcs-emulator /opt/airflow/logs
 USER airflow
